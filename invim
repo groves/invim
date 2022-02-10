@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+set -o errexit
+
+if [[ ! $NVIM_LISTEN_ADDRESS ]] ; then
+  echo 'Error: Neovim must be running and have set $NVIM_LISTEN_ADDRESS for invim to communicate with it' >&2
+  exit 1
+fi
+
+# Now that we've checked for NVIM_LISTEN_ADDRESS, we don't want any more undefined
+set -o nounset
+
+# Defaults
+OPEN_METHOD=edit
+# We're assigning this to our Lua wait variable, so use Lua boolean literals
+WAIT="false"
+# Unless we're doing a dryrun, run an nvim that starts up as quickly as possible to run the Lua we
+# give it
+COMMAND='nvim --headless -u NONE -i NONE -n -s -'
+
+# From https://stackoverflow.com/a/23002317. Removed -f check to allow for files that don't yet exist
+function abspath() {
+  if [ -d "$1" ]; then # dir
+    (cd "$1"; pwd)
+  elif [[ $1 = /* ]]; then
+    echo "$1"
+  elif [[ $1 == */* ]]; then
+    echo "$(cd "${1%/*}"; pwd)/${1##*/}"
+  else
+    echo "$(pwd)/$1"
+  fi
+}
+
+function usage() {
+  cat <<'EOF'
+Usage:
+  invim [options] file  Edit file in the Neovim running at $NVIM_LISTEN_ADDRESS
+
+Options:
+  --remote            Open the file with :edit. This is the default
+  -w, --remote-wait   Wait for the file's buffer to be deleted before exiting
+  -o, --split         Open the file with :split
+  -O, --vsplit        Open the file with :vsplit
+  -p, --tabedit       Open the file with :tabedit
+  -l, --last          Move to the previous window and open the file with :edit
+  -n, --dry-run       Print what Neovim would execute instead of executing it
+EOF
+exit $1
+}
+
+TO_EDIT=""
+# From https://medium.com/@Drew_Stokes/bash-argument-parsing-54f3b81a6a8f
+while (( "$#" )); do
+  case "$1" in
+    --remote)
+      WAIT="false"
+      shift
+      ;;
+    -w|--remote-wait)
+      WAIT="true"
+      shift
+      ;;
+    -o|--split)
+      OPEN_METHOD=split
+      shift
+      ;;
+    -O|--vsplit)
+      OPEN_METHOD=vsplit
+      shift
+      ;;
+    -p|--tabedit)
+      OPEN_METHOD=tabedit
+      shift
+      ;;
+    -l|--last)
+      OPEN_METHOD="wincmd p | edit"
+      shift
+      ;;
+    -n|--dry-run)
+      COMMAND=cat
+      shift
+      ;;
+    -h|--help)
+      usage 0
+      ;;
+    -*|--*=) # unsupported flags
+      echo "Error: Unsupported flag $1" >&2
+      echo
+      usage 1
+      ;;
+    *) # an unbound argument is the file to edit
+      if [[ $TO_EDIT ]] ; then
+        echo "Error: May only pass in a single file to edit. '$1' is extra" >&2
+        exit 1
+      fi
+      TO_EDIT="[===[$(abspath $1)]===]"
+      shift
+      ;;
+  esac
+done
+
+if [[ ! $TO_EDIT ]] ; then
+  echo "Error: Must pass in a file to edit" >&2
+  echo
+  usage 1
+fi
+
+# Neovim refuses to not print the initial command it gets with -s, at least as far as I can tell.
+# To keep from having that output when the command works, grep it out using the technique from
+# https://stackoverflow.com/a/15936384. Using the subcommand allows nvim's exit code to pass
+# through
+# Putting it together: start with our nvim command, redirect its stderr to grep out its distracting
+# output, and feed in the Lua for nvim to execute via the EOF heredoc
+$COMMAND \
+  2> >(grep -v ":silent lua <<EOLUA" 1>&2) \
+  <<EOF
+:silent lua <<EOLUA
+local wait = $WAIT
+local addr = vim.fn.getenv("NVIM_LISTEN_ADDRESS")
+local chanId = vim.fn.sockconnect('pipe', addr, { rpc = true })
+local script = '$OPEN_METHOD ' .. $TO_EDIT
+if wait then
+  local remoteChanId = vim.fn.rpcrequest(chanId, 'nvim_get_api_info')[1]
+  script = string.format([[
+%s
+  set bufhidden=delete
+  augroup neditor
+    autocmd BufDelete <buffer> silent! call rpcnotify(%d, 'nvim_command', 'quit')
+   augroup END
+]], script, remoteChanId)
+end
+vim.fn.rpcrequest(chanId, 'nvim_exec', script, false)
+if not wait then
+   vim.api.nvim_command('quit')
+ end
+EOLUA
+EOF
