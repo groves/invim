@@ -17,7 +17,7 @@ If you don't use ~/bin, swap that for another directory on your path.
 # Usage
 
 ```
-  invim [options] file  Edit file in the Neovim running at $NVIM_LISTEN_ADDRESS
+  invim [options] file  Edit file in the Neovim running at $NVIM
 
 Options:
   --remote            Open the file with :edit. This is the default
