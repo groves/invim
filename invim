@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -o errexit
 
-if [[ ! $NVIM_LISTEN_ADDRESS ]] ; then
-  echo 'Error: Neovim must be running and have set $NVIM_LISTEN_ADDRESS for invim to communicate with it' >&2
+if [[ ! $NVIM ]] ; then
+  echo 'Error: Neovim must be running and have set $NVIM for invim to communicate with it' >&2
   exit 1
 fi
 
-# Now that we've checked for NVIM_LISTEN_ADDRESS, we don't want any more undefined
+# Now that we've checked for NVIM, we don't want any more undefined
 set -o nounset
 
 # Defaults
@@ -33,7 +33,7 @@ function abspath() {
 function usage() {
   cat <<'EOF'
 Usage:
-  invim [options] file  Edit file in the Neovim running at $NVIM_LISTEN_ADDRESS
+  invim [options] file  Edit file in the Neovim running at $NVIM
 
 Options:
   --remote            Open the file with :edit. This is the default
@@ -115,7 +115,7 @@ $COMMAND \
   <<EOF
 :silent lua <<EOLUA
 local wait = $WAIT
-local addr = vim.fn.getenv("NVIM_LISTEN_ADDRESS")
+local addr = vim.fn.getenv("NVIM")
 local chanId = vim.fn.sockconnect('pipe', addr, { rpc = true })
 local script = '$OPEN_METHOD ' .. $TO_EDIT
 if wait then
